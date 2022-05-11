@@ -16,8 +16,8 @@ import (
 
 var (
 	safeEntryPoints = []common.Address{
-		common.HexToAddress("0x12411b95ef5aec210de6b4548d1c316178f7f18a"),
-		common.HexToAddress("0x90f3E1105E63C877bF9587DE5388C23Cdb702c6B"),
+		common.HexToAddress("0x602ab3881ff3fa8da60a8f44cf633e91ba1fdb69"),
+		common.HexToAddress("0xD3ebD80aFf10B54795708Ece1d6D3253e3258A05"),
 	}
     httpClient   *ethclient.Client
     rpcClient    *rpc.Client
@@ -73,11 +73,14 @@ func main() {
 
 	// make websocket subscription
 	opJSONchannel := make(chan UserOperationJSON, 100)
+	extraParam := make(map[string]interface{})
+	extraParam["entryPoints"] = safeEntryPoints
+	extraParam["includeUserOperations"] = true
 	sub, err := rpcClient.EthSubscribe(
 		context.Background(),
 		opJSONchannel,
 		"newPendingUserOperations",
-		map[string][]common.Address{"entryPoints": safeEntryPoints},
+		extraParam,
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -115,18 +118,13 @@ func HandleOp(opWithEp UserOperationWithEntryPoint) {
 		log.Fatal(err)
 	}
 
-	gasPrice, err := httpClient.SuggestGasPrice(context.Background())
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	// lets make sure this gets included in a block asap
-	auth.GasPrice = new(big.Int).Mul(gasPrice, big.NewInt(5))
+	auth.GasTipCap = big.NewInt(3e9)
+	auth.GasFeeCap = big.NewInt(100e9) // YOU SHOULD PROBABLY OPTIMIZE THIS
 
 	baseFee := GetBaseFee(httpClient)
 	effectiveGasPrice := math.BigMin(new(big.Int).Add(op.MaxPriorityFeePerGas, baseFee), op.MaxFeePerGas)
 
-	if auth.GasPrice.Cmp(effectiveGasPrice) > 0 {
+	if auth.GasFeeCap.Cmp(effectiveGasPrice) > 0 {
 		log.Printf("op doesn't pay enough, op effective gas price: %s, tx gas price: %s\n", effectiveGasPrice, auth.GasPrice)
 		// we would lose money, so normally we would not submit it normally but this is good for testing
 		// return
@@ -136,7 +134,7 @@ func HandleOp(opWithEp UserOperationWithEntryPoint) {
 	}
 
 
-	tx, err := entryPointAbi.HandleOp(auth, op, wallet.Address)
+	tx, err := entryPointAbi.HandleOps(auth, []abis.UserOperation{op}, wallet.Address)
 	if err != nil {
 		log.Fatal(err)
 	}
